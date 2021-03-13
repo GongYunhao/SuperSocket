@@ -1,36 +1,36 @@
 ﻿using System;
-using System.Collections.Generic;
+using System.Buffers;
 using System.Linq;
-using System.Text;
+using SuperSocket.ProtoBase;
 
 namespace SuperSocket.WebSocket.FramePartReader
 {
-    class MaskKeyReader : DataFramePartReader
+    class MaskKeyReader : PackagePartReader
     {
-        public override int Process(int lastLength, WebSocketDataFrame frame, out IDataFramePartReader nextPartReader)
+        public override bool Process(WebSocketPackage package, object filterContext, ref SequenceReader<byte> reader, out IPackagePartReader<WebSocketPackage> nextPartReader, out bool needMoreData)
         {
-            int required = lastLength + 4;
+            int required = 4;
 
-            if (frame.Length < required)
-            {
-                nextPartReader = this;
-                return -1;
-            }
-
-            //frame.MaskKey = frame.InnerData.ToArrayData(lastLength, 4);
-
-            if (frame.ActualPayloadLength == 0)
+            if (reader.Remaining < required)
             {
                 nextPartReader = null;
-                return (int)((long)frame.Length - required);
+                needMoreData = true;
+                return false;
             }
 
-            nextPartReader = new PayloadDataReader();
+            needMoreData = false;
 
-            if (frame.Length > required)
-                return nextPartReader.Process(required, frame, out nextPartReader);
+            package.MaskKey = reader.Sequence.Slice(reader.Consumed, 4).ToArray();
+            reader.Advance(4);
 
-            return 0;
+            if (TryInitIfEmptyMessage(package))
+            {
+                nextPartReader = null;
+                return true;
+            }
+
+            nextPartReader = PayloadDataReader;
+            return false;
         }
     }
 }

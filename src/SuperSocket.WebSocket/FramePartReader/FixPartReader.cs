@@ -1,44 +1,58 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+using System.Buffers;
+using SuperSocket.ProtoBase;
 
 namespace SuperSocket.WebSocket.FramePartReader
 {
-    class FixPartReader : DataFramePartReader
+    class FixPartReader : PackagePartReader
     {
-        public override int Process(int lastLength, WebSocketDataFrame frame, out IDataFramePartReader nextPartReader)
+        public override bool Process(WebSocketPackage package, object filterContext, ref SequenceReader<byte> reader, out IPackagePartReader<WebSocketPackage> nextPartReader, out bool needMoreData)
         {
-            if (frame.Length < 2)
+            if (reader.Length < 2)
             {
-                nextPartReader = this;
-                return -1;
+                nextPartReader = null;
+                needMoreData = true;
+                return false;
             }
 
-            if (frame.PayloadLenght < 126)
+            needMoreData = false;
+
+            reader.TryRead(out byte firstByte);
+
+            var opCode = (OpCode)(firstByte & 0x0f);
+
+            if (opCode != OpCode.Continuation)
             {
-                if (frame.HasMask)
+                package.OpCode = opCode;
+            }
+
+            package.OpCodeByte = firstByte;
+
+            reader.TryRead(out byte secondByte);
+            package.PayloadLength = secondByte & 0x7f;
+            package.HasMask = (secondByte & 0x80) == 0x80;
+
+            if (package.PayloadLength >= 126)
+            {
+                nextPartReader = ExtendedLengthReader;
+            }
+            else
+            {
+                if (package.HasMask)
                     nextPartReader = MaskKeyReader;
                 else
                 {
-                    if (frame.ActualPayloadLength == 0)
+                    if (TryInitIfEmptyMessage(package))
                     {
                         nextPartReader = null;
-                        return (int)((long)frame.Length - 2);
+                        return true;
                     }
 
                     nextPartReader = PayloadDataReader;
                 }
             }
-            else
-            {
-                nextPartReader = ExtendedLenghtReader;
-            }
 
-            if (frame.Length > 2)
-                return nextPartReader.Process(2, frame, out nextPartReader);
-
-            return 0;
+            return false;
         }
     }
 }
