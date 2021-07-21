@@ -300,10 +300,20 @@ namespace SuperSocket.Tests.WebSocket
                 var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 socket.NoDelay = true;
                 var endPoint = hostConfigurator.GetServerEndPoint();
-                await socket.ConnectAsync(endPoint);                
+                await socket.ConnectAsync(endPoint);
                 Assert.True(socket.Connected);
+                Assert.False(socket.Poll(1, SelectMode.SelectRead) && socket.Available == 0);
+
+                /* enable tcp keep alive
+                socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 1);
+                socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 1);
+                socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 1);
+                */
+
                 await Task.Delay(1000 * 5);
-                Assert.False(socket.Connected);
+                //Assert.False(socket.Connected);
+                Assert.True(socket.Poll(1, SelectMode.SelectRead) && socket.Available == 0);
+
                 await server.StopAsync();
             }
         }
@@ -702,13 +712,13 @@ namespace SuperSocket.Tests.WebSocket
         [Theory]
         [InlineData(typeof(RegularHostConfigurator))]
         [InlineData(typeof(SecureHostConfigurator))]
-        public async Task TestCommands(Type hostConfiguratorType) 
+        public async Task TestCommands(Type hostConfiguratorType, Func<ISuperSocketHostBuilder<WebSocketPackage>, ISuperSocketHostBuilder<WebSocketPackage>> hostBuilderAdapter = null) 
         {
             var hostConfigurator = CreateObject<IHostConfigurator>(hostConfiguratorType);
 
             using (var server = CreateWebSocketServerBuilder(builder =>
             {
-                return builder
+                var hostBuilder = builder
                     .UseCommand<StringPackageInfo, StringPackageConverter>(commandOptions =>
                     {
                         // register commands one by one
@@ -716,9 +726,14 @@ namespace SuperSocket.Tests.WebSocket
                         commandOptions.AddCommand<MULT>();
                         commandOptions.AddCommand<SUB>();
 
-                        // register all commands in one aassembly
+                        // register all commands in one assembly
                         //commandOptions.AddCommandAssembly(typeof(SUB).GetTypeInfo().Assembly);
                     });
+
+                if (hostBuilderAdapter != null)
+                    hostBuilder = hostBuilderAdapter(hostBuilder);
+
+                return hostBuilder;
             }, hostConfigurator).BuildAsServer())
             {
                 Assert.True(await server.StartAsync());
@@ -744,6 +759,24 @@ namespace SuperSocket.Tests.WebSocket
 
                 await server.StopAsync();
             }
+        }
+
+        [Theory]
+        [InlineData(typeof(RegularHostConfigurator))]
+        [InlineData(typeof(SecureHostConfigurator))]
+        public async Task TestCommandsWithCustomSession(Type hostConfiguratorType) 
+        {
+            await TestCommands(hostConfiguratorType, builder => 
+            {
+                return builder
+                    .UseSession<MyWebSocketSession>()
+                    .ConfigureServices(
+                        (hostCtx, services) =>
+                        {
+                            services.AddSingleton<ITestService, TestService>();
+                        }
+                    );
+            });
         }
 
         [Theory]
